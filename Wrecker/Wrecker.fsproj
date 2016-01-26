@@ -48,6 +48,7 @@
     <Compile Include="Http.fs" />
     <Compile Include="Routing.fs" />
     <Compile Include="Util.fs" />
+    <Compile Include="IO.fs" />
   </ItemGroup>
   <PropertyGroup>
     <MinimumVisualStudioVersion Condition="'$(MinimumVisualStudioVersion)' == ''">11</MinimumVisualStudioVersion>
