@@ -163,10 +163,10 @@ let private readBody headers state maxSize s : Async<(byte[]*ReadState) option> 
 
 let private fixUrl (url : System.Uri) (headers : Map<string,string list>) : System.Uri option =
     match Map.tryFind "Host" headers with
-    | Some (x::_) ->
+    | Some (x::_) when x <> url.Host ->
         try
-            let host = System.Uri x
-            Some (new System.Uri (host, url))
+            let host = new System.UriBuilder (x)
+            Some (new System.Uri (host.Uri, url))
         with
         | _ -> None
     | _ -> Some url
@@ -282,7 +282,7 @@ let defaultServer =
           Reason = "Not Found"
           Header = Map.empty
           Body = Body.fromString "Not Found" }
-      DefaultUrl = new System.Uri("http://" + hostName)
+      DefaultUrl = (new System.UriBuilder (hostName)).Uri
       MaxRequest = 64 * 1024 }
 
 let runConn (server : Server) (conn : Socket) =
@@ -293,12 +293,9 @@ let runConn (server : Server) (conn : Socket) =
             let! req = readRequest state server.DefaultUrl server.MaxRequest st
             match req with
             | None ->
-                printfn "None"
                 conn.Close ()
             | Some (state, req) ->
-                printfn "%A" req
                 let resp = server.Router req
-                printfn "%A" resp
                 do! writeResponse st resp
                 do! st.FlushAsync () |> Async.AwaitTask
                 return! inner state
