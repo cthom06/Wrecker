@@ -3,11 +3,6 @@
 open Cthom06.Wrecker.Http
 open System.Text.RegularExpressions
 
-let orDef def opt =
-    match opt with
-    | Some v -> v
-    | None -> def
-
 let try500 f (req : Request) =
     try
         f req
@@ -22,32 +17,30 @@ let try500 f (req : Request) =
 
 let or404 f (req : Request) =
     f req
-    |> orDef
+    |> Option.orDefault
         { Code = 404
           Reason = "Not Found"
           Version = req.Version
           Header = Map.empty
           Body = Body.fromString "404 - Resource not found" }
 
-let onlyGet f (req : Request) =
-    if req.Method = "GET" then
-        Some (f req)
-    else
-        None
+let plexMethod handlers =
+    let m = Map.ofSeq handlers
+    fun (req : Request) ->
+        Map.tryFind req.Method m
+        |> Option.map (fun f -> f req)
 
-let onlyPost f (req : Request) =
-    if req.Method = "POST" then
-        Some (f req)
-    else
-        None
+let plexHost handlers =
+    let m = Map.ofSeq handlers
+    fun (req : Request) ->
+        Map.tryFind req.Url.Host m
+        |> Option.map (fun f -> f req)
 
-let plexMethod handlers (req : Request) =
-    Map.tryFind req.Method handlers
-    |> Option.map (fun f -> f req)
-
-let plexHost handlers (req : Request) =
-    Map.tryFind req.Url.Host handlers
-    |> Option.map (fun f -> f req)
+let plexPath handlers =
+    let m = Map.ofSeq handlers
+    fun (req : Request) ->
+        Map.tryFind req.Url.AbsolutePath m
+        |> Option.map (fun f -> f req)
 
 let plexPathPrefix handlers (req : Request) =
     List.tryFind (fst >> req.Url.AbsolutePath.StartsWith) handlers
@@ -55,5 +48,6 @@ let plexPathPrefix handlers (req : Request) =
 
 let plexPathRegex (handlers : (Regex * _) list) (req : Request) =
     handlers
-    |> List.tryFind (fun (pattern,_) -> (pattern.Match req.Url.AbsolutePath).Success)
-    |> Option.map (fun (path,f) -> f req)
+    |> Seq.map (fun (pattern,f) -> (pattern.Match req.Url.AbsolutePath), f)
+    |> Seq.tryFind (fun (mtch, f) -> mtch.Success)
+    |> Option.map (fun (mtch,f) -> f mtch req)

@@ -85,7 +85,7 @@ let private readLine (state : ReadState) maxSize (s : Stream) =
     inner 0 state
 
 
-let private parseReqLine baseUri (line : byte[]) =
+let private parseReqLine (host : string) (line : byte[]) =
     // drop \r\n
     // 4 to detect errors but not allocate 10000 arrays for bad input
     let parts = (Encoding.ASCII.GetString (line, 0, line.Length)).Split ([|' '|], 4)
@@ -93,7 +93,7 @@ let private parseReqLine baseUri (line : byte[]) =
         None
     else
         try
-            Some (new System.Uri (baseUri, parts.[1]))
+            Some (new System.Uri ((new System.UriBuilder (host)).Uri, parts.[1]))
         with
         | _ -> None
         |> Option.map (fun url ->
@@ -171,11 +171,11 @@ let private fixUrl (url : System.Uri) (headers : Map<string,string list>) : Syst
         | _ -> None
     | _ -> Some url
 
-let private readRequest state baseUri maxSize s =
+let private readRequest state host maxSize s =
     readLine state maxSize s
     |> abind (fun (line, state) ->
         let maxSize = maxSize - line.Length
-        parseReqLine baseUri line
+        parseReqLine host line
         |> Async.value
         |> abind (fun (meth, url, version) ->
             readHeaders state maxSize s
@@ -264,50 +264,46 @@ let private writeResponse s (resp : Response) =
         |> Async.bind (fun () -> Async.value shouldChunk))
     |> Async.bind (writeBody s resp.Body)
 
-type Server = {
+type ServerConfig = {
     Host : string
     Port : int
     Router : Request -> Response
-    DefaultUrl : System.Uri
     MaxRequest : int
     }
+    with
+        static member Default =
+            { Host = "localhost"
+              Port = 80
+              Router = fun _ ->
+                { Version = "HTTP/1.1"
+                  Code = 404
+                  Reason = "Not Found"
+                  Header = Map.empty
+                  Body = Body.fromString "Not Found" }
+              MaxRequest = 64 * 1024 }
 
-let defaultServer =
-    let hostName = Dns.GetHostName ()
-    { Host = hostName
-      Port = 80
-      Router = fun _ ->
-        { Version="HTTP/1.1"
-          Code = 404
-          Reason = "Not Found"
-          Header = Map.empty
-          Body = Body.fromString "Not Found" }
-      DefaultUrl = (new System.UriBuilder (hostName)).Uri
-      MaxRequest = 64 * 1024 }
-
-let runConn (server : Server) (conn : Socket) =
-    let st = new NetworkStream (conn)
+let runConn (server : ServerConfig) (conn : Stream) =
     let state = { Offset = 0; Buffer = Array.zeroCreate 4096 }
     let rec inner state = 
         async {
-            let! req = readRequest state server.DefaultUrl server.MaxRequest st
+            let! req = readRequest state server.Host server.MaxRequest conn
             match req with
             | None ->
                 conn.Close ()
             | Some (state, req) ->
                 let resp = server.Router req
-                do! writeResponse st resp
-                do! st.FlushAsync () |> Async.AwaitTask
+                do! writeResponse conn resp
+                do! conn.FlushAsync () |> Async.AwaitTask
                 return! inner state
         }
     inner state
 
-let runServer (server : Server) =
+let runServer (server : ServerConfig) =
     let socks = 
         server.Host
         |> Dns.GetHostAddresses
         |> Array.map (fun addr ->
-            let sock = new Socket(SocketType.Stream, ProtocolType.Tcp)
+            let sock = new Socket(addr.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
             sock.Bind (new IPEndPoint (addr, server.Port))
             sock.Listen (10) // idk
             sock)
@@ -315,4 +311,4 @@ let runServer (server : Server) =
         let sockList = new System.Collections.Generic.List<Socket> (socks)
         Socket.Select (sockList, null, null, -1)
         sockList
-        |> Seq.iter (fun t -> t.Accept () |> runConn server |> Async.Start)
+        |> Seq.iter (fun t -> new NetworkStream (t.Accept (), true) |> runConn server |> Async.Start)

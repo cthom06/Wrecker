@@ -5,7 +5,7 @@ open Cthom06.Wrecker.Routing
 open System.IO
 open System.IO.Compression
 
-let defaultMimeTypes =
+let private defaultMimeTypes =
     [ ".html", "text/html; charset=utf-8"
       ".css", "text/css; charset=utf-8"
       ".js", "application/x-javascript"
@@ -14,6 +14,19 @@ let defaultMimeTypes =
       ".jpg", "image/jpeg"
       ".png", "image/png" ]
     |> Map.ofList
+
+type StaticHandlerConfig = {
+    Prefix : string
+    Root : string
+    MimeTypes : Map<string, string>
+    NotFound : Request -> Response
+    }
+    with
+        static member Default =
+            { Prefix = "/"
+              Root = "/var/www"
+              MimeTypes = defaultMimeTypes
+              NotFound = (fun _ -> None) |> or404 }
 
 let private getStaticFileHeaders (stat : FileInfo) =
     let fileType =
@@ -45,7 +58,7 @@ let private unmodResp (req : Request) =
       Header = Map.empty
       Body = EmptyBody }
 
-let rec doFile (req : Request) path =
+let rec private doFile (req : Request) path =
     try
         let stat = new FileInfo (path)
         if stat.Exists then
@@ -64,7 +77,7 @@ let rec doFile (req : Request) path =
     with
     | :? FileNotFoundException -> None
 
-and tryIndex req path =
+and private tryIndex req path =
     let stat = new DirectoryInfo (path)
     if stat.Exists then
         Path.Combine (path, "index.html")
@@ -72,9 +85,14 @@ and tryIndex req path =
     else
         None
 
-let staticFileHandler prefix folder (req : Request) =
-    if req.Url.AbsolutePath.StartsWith prefix then
-        let path = Path.Combine (folder, req.Url.AbsolutePath.Substring prefix.Length)
-        doFile req path
-    else
-        None
+let handleStatic (config : StaticHandlerConfig) (req : Request) =
+    let f req = 
+        Path.Combine (config.Root, req.Url.AbsolutePath.Substring config.Prefix.Length)
+        |> doFile req
+        |> Option.orDefault (config.NotFound req)
+    [ config.Prefix, 
+        [ "GET", f
+          "HEAD", f ]
+        |> plexMethod >> Option.orDefault (config.NotFound req) ]
+    |> plexPathPrefix >> Option.orDefault (config.NotFound req)
+    <| req
