@@ -265,15 +265,13 @@ let private writeResponse s (resp : Response) =
     |> Async.bind (writeBody s resp.Body)
 
 type ServerConfig = {
-    Host : string
-    Port : int
+    DefaultHost : string
     Router : Request -> Response
     MaxRequest : int
     }
     with
         static member Default =
-            { Host = "localhost"
-              Port = 80
+            { DefaultHost = "localhost"
               Router = fun _ ->
                 { Version = "HTTP/1.1"
                   Code = 404
@@ -286,7 +284,7 @@ let runConn (server : ServerConfig) (conn : Stream) =
     let state = { Offset = 0; Buffer = Array.zeroCreate 4096 }
     let rec inner state = 
         async {
-            let! req = readRequest state server.Host server.MaxRequest conn
+            let! req = readRequest state server.DefaultHost server.MaxRequest conn
             match req with
             | None ->
                 conn.Close ()
@@ -298,6 +296,18 @@ let runConn (server : ServerConfig) (conn : Stream) =
         }
     inner state
 
+let runServer (server : ServerConfig) : Stream MailboxProcessor =
+    MailboxProcessor.Start (fun box ->
+        let rec inner () =
+            async {
+                let! conn = box.Receive ()
+                runConn server conn
+                |> Async.Start
+                return! inner ()
+            }
+        inner ())
+
+(*
 let runServer (server : ServerConfig) =
     let socks = 
         server.Host
@@ -312,3 +322,4 @@ let runServer (server : ServerConfig) =
         Socket.Select (sockList, null, null, -1)
         sockList
         |> Seq.iter (fun t -> new NetworkStream (t.Accept (), true) |> runConn server |> Async.Start)
+*)
