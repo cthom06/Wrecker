@@ -306,20 +306,3 @@ let runServer (server : ServerConfig) : Stream MailboxProcessor =
                 return! inner ()
             }
         inner ())
-
-(*
-let runServer (server : ServerConfig) =
-    let socks = 
-        server.Host
-        |> Dns.GetHostAddresses
-        |> Array.map (fun addr ->
-            let sock = new Socket(addr.AddressFamily, SocketType.Stream, ProtocolType.Tcp)
-            sock.Bind (new IPEndPoint (addr, server.Port))
-            sock.Listen (10) // idk
-            sock)
-    while true do
-        let sockList = new System.Collections.Generic.List<Socket> (socks)
-        Socket.Select (sockList, null, null, -1)
-        sockList
-        |> Seq.iter (fun t -> new NetworkStream (t.Accept (), true) |> runConn server |> Async.Start)
-*)
